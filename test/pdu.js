@@ -1,7 +1,7 @@
 var assert = require('assert'),
 	stream = require('stream'),
-	PDU = require('../lib/pdu').PDU,
-	Buffer = require('safer-buffer').Buffer;
+	PDU = require('..').PDU,
+	Buffer = require('buffer').Buffer;
 
 describe('PDU', function() {
 	var buffer, expected;

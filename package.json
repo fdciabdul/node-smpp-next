@@ -1,39 +1,58 @@
 {
   "name": "smpp",
-  "version": "0.6.0-rc.4",
-  "description": "SMPP client and server implementation in node.js",
-  "homepage": "https://github.com/farhadi/node-smpp",
-  "bugs": "https://github.com/farhadi/node-smpp/issues",
+  "version": "0.7.0",
+  "description": "SMPP client and server implementation in node.js (TypeScript, ESM + CJS, Bun-ready)",
+  "homepage": "https://github.com/fdciabdul/node-smpp-next",
+  "bugs": "https://github.com/fdciabdul/node-smpp-next/issues",
   "author": "Ali Farhadi <a.farhadi@gmail.com>",
   "contributors": [
     "Julián Gutiérrez <juliangut@gmail.com>"
   ],
   "engines": {
-    "node": ">=4"
+    "node": ">=18"
   },
-  "main": "./lib/smpp",
+  "type": "commonjs",
+  "main": "./dist/smpp.js",
+  "module": "./dist/smpp.mjs",
+  "types": "./dist/smpp.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/smpp.d.mts",
+        "default": "./dist/smpp.mjs"
+      },
+      "require": {
+        "types": "./dist/smpp.d.ts",
+        "default": "./dist/smpp.js"
+      }
+    }
+  },
   "repository": {
     "type": "git",
-    "url": "https://github.com/farhadi/node-smpp.git"
+    "url": "https://github.com/fdciabdul/node-smpp-next.git"
   },
   "license": "MIT",
   "files": [
-    "lib/",
-    "index.js"
+    "dist/",
+    "src/"
   ],
   "scripts": {
-    "coveralls": "nyc report --reporter=text-lcov | coveralls",
-    "test_coverage": "nyc --reporter=text mocha",
-    "test": "mocha"
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "test": "npm run build && mocha",
+    "test:coverage": "npm run build && c8 --reporter=text mocha",
+    "test:bun": "npm run build && bun test test/bun",
+    "prepublishOnly": "npm run build"
   },
   "devDependencies": {
-    "coveralls": "^2.11.9",
-    "mocha": "^5.2.0",
-    "nyc": "^12.0.2"
+    "@types/node": "^22.10.0",
+    "c8": "^10.1.3",
+    "mocha": "^11.1.0",
+    "tsup": "^8.3.5",
+    "typescript": "^5.7.2"
   },
   "dependencies": {
     "findhit-proxywrap": "^0.3.12",
-    "iconv-lite": "0.x",
-    "safer-buffer": ">= 2.1.2 < 3"
+    "iconv-lite": "0.x"
   }
 }
