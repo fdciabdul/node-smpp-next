@@ -1,11 +1,45 @@
-# node-smpp
+# node-smpp-next
 
 SMPP client and server implementation in node.js.
 
-[![Build Status](https://api.travis-ci.com/farhadi/node-smpp.svg?branch=master)](https://app.travis-ci.com/github/farhadi/node-smpp)
-[![Dependency Status](https://david-dm.org/farhadi/node-smpp.svg)](https://david-dm.org/farhadi/node-smpp)
-[![devDependency Status](https://david-dm.org/farhadi/node-smpp/dev-status.svg)](https://david-dm.org/farhadi/node-smpp#info=devDependencies)
-[![Coverage Status](https://coveralls.io/repos/github/farhadi/node-smpp/badge.svg?branch=master)](https://coveralls.io/github/farhadi/node-smpp?branch=master)
+> **Maintained fork of [node-smpp](https://github.com/farhadi/node-smpp).**
+> Rewritten in **TypeScript**, ships **dual ESM + CommonJS** builds with bundled
+> type declarations, runs on **Node.js >= 18** and **Bun**, and has a
+> security-audited dependency tree (0 production vulnerabilities).
+>
+> The runtime API is 100% backward compatible with `node-smpp` — existing
+> `require('smpp')` code keeps working unchanged.
+
+### What changed in this fork
+
+- **TypeScript source** (`src/*.ts`) with full `.d.ts` type definitions.
+- **Dual package**: `import`/ESM (`dist/smpp.mjs`) and `require`/CJS (`dist/smpp.js`).
+- **Bun support**: works under `bun` runtime and `bun test`.
+- **Security**: dropped the abandoned `coveralls` + `nyc` (43 known CVEs) and the
+  unnecessary `safer-buffer` shim; production deps audit clean.
+- **Node baseline** raised to `>=18`.
+
+### Install
+
+```sh
+npm install smpp        # or: bun add smpp / pnpm add smpp
+```
+
+```javascript
+// CommonJS
+const smpp = require('smpp');
+// ESM / TypeScript
+import smpp, { connect, createServer, PDU } from 'smpp';
+```
+
+### Develop
+
+```sh
+npm run build       # build dual CJS+ESM + types (tsup)
+npm test            # build, then run the mocha suite
+npm run typecheck   # strict tsc --noEmit
+npm run test:bun    # bun-native smoke test
+```
 
 ## Introduction
 
