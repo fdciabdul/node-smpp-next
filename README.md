@@ -7,8 +7,8 @@ SMPP client and server implementation in node.js.
 > type declarations, runs on **Node.js >= 18** and **Bun**, and has a
 > security-audited dependency tree (0 production vulnerabilities).
 >
-> The runtime API is 100% backward compatible with `node-smpp` — existing
-> `require('smpp')` code keeps working unchanged.
+> The runtime API is 100% backward compatible with `node-smpp` — existing code
+> keeps working unchanged after swapping the import to `node-smpp-next`.
 
 ### What changed in this fork
 
@@ -22,14 +22,14 @@ SMPP client and server implementation in node.js.
 ### Install
 
 ```sh
-npm install smpp        # or: bun add smpp / pnpm add smpp
+npm install node-smpp-next        # or: bun add node-smpp-next / pnpm add node-smpp-next
 ```
 
 ```javascript
 // CommonJS
-const smpp = require('smpp');
+const smpp = require('node-smpp-next');
 // ESM / TypeScript
-import smpp, { connect, createServer, PDU } from 'smpp';
+import smpp, { connect, createServer, PDU } from 'node-smpp-next';
 ```
 
 ### Develop
@@ -58,7 +58,7 @@ for a list of available operations and their parameters.
 ## Installation
 
 ```
-npm install smpp
+npm install node-smpp-next
 ```
 
 ## Usage
@@ -66,7 +66,7 @@ npm install smpp
 ### Creating a SMPP session
 
 ``` javascript
-var smpp = require('smpp');
+var smpp = require('node-smpp-next');
 var session = smpp.connect({
 	url: 'smpp://example.com:2775',
 	auto_enquire_link_period: 10000,
@@ -95,7 +95,7 @@ var session = smpp.connect({
 ### Creating a SMPP server
 
 ``` javascript
-var smpp = require('smpp');
+var smpp = require('node-smpp-next');
 var server = smpp.createServer({
 	debug: true
 }, function(session) {

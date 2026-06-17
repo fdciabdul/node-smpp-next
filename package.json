@@ -1,13 +1,26 @@
 {
-  "name": "smpp",
-  "version": "0.7.0",
+  "name": "node-smpp-next",
+  "version": "1.0.0",
   "description": "SMPP client and server implementation in node.js (TypeScript, ESM + CJS, Bun-ready)",
+  "keywords": [
+    "smpp",
+    "sms",
+    "smsc",
+    "esme",
+    "smpp-client",
+    "smpp-server",
+    "typescript"
+  ],
   "homepage": "https://github.com/fdciabdul/node-smpp-next",
   "bugs": "https://github.com/fdciabdul/node-smpp-next/issues",
-  "author": "Ali Farhadi <a.farhadi@gmail.com>",
+  "author": "Abdul Muttaqin <cp@imtaqin.id>",
   "contributors": [
+    "Ali Farhadi <a.farhadi@gmail.com>",
     "Julián Gutiérrez <juliangut@gmail.com>"
   ],
+  "publishConfig": {
+    "access": "public"
+  },
   "engines": {
     "node": ">=18"
   },
@@ -29,7 +42,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/fdciabdul/node-smpp-next.git"
+    "url": "git+https://github.com/fdciabdul/node-smpp-next.git"
   },
   "license": "MIT",
   "files": [
