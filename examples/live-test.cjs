@@ -1,15 +1,22 @@
 // Live SMPP server test.
+// Credentials are read from environment variables only — never hardcode them.
 // Usage:
-//   node examples/live-test.cjs            -> connect + bind_transceiver + enquire_link + unbind
-//   DEST=6281234567890 node examples/live-test.cjs  -> also send a submit_sm to DEST
+//   HOST=smsc.example.com PORT=2775 SYSTEM_ID=user PASSWORD=secret \
+//     node examples/live-test.cjs                 -> bind + enquire_link + unbind
+//   ... DEST=6281234567890 node examples/live-test.cjs  -> also send a submit_sm
 const smpp = require('..');
 
-const HOST = process.env.HOST || 'REDACTED_HOST';
+const HOST = process.env.HOST;
 const PORT = Number(process.env.PORT || 2775);
-const SYSTEM_ID = process.env.SYSTEM_ID || 'REDACTED_SYSID';
-const PASSWORD = process.env.PASSWORD || 'REDACTED';
+const SYSTEM_ID = process.env.SYSTEM_ID;
+const PASSWORD = process.env.PASSWORD;
 const DEST = process.env.DEST || '';
 const MESSAGE = process.env.MESSAGE || 'node-smpp-next live test';
+
+if (!HOST || !SYSTEM_ID || !PASSWORD) {
+	console.error('Missing required env vars: HOST, SYSTEM_ID, PASSWORD');
+	process.exit(1);
+}
 
 function log(...a) {
 	console.log(new Date().toISOString(), '-', ...a);
