@@ -55,6 +55,7 @@
     "test": "npm run build && mocha",
     "test:coverage": "npm run build && c8 --reporter=text mocha",
     "test:bun": "npm run build && bun test test/bun",
+    "prepare": "npm run build",
     "prepublishOnly": "npm run build"
   },
   "devDependencies": {
