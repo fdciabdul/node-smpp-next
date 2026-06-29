@@ -581,6 +581,15 @@ filters.message = {
 		if (Buffer.isBuffer(value)) {
 			return value;
 		}
+		// Be tolerant of non-string scalars (e.g. submit_sm with a numeric
+		// short_message) and of null/undefined, which previously crashed with
+		// "Cannot read properties of undefined (reading 'message')"
+		// (issues #229 and #256).
+		if (value === null || value === undefined) {
+			value = '';
+		} else if (typeof value === 'number' || typeof value === 'boolean') {
+			value = String(value);
+		}
 		var message = typeof value === 'string' ? value : value.message;
 		if (typeof message === 'string' && message) {
 			var encoded = false;
@@ -624,7 +633,31 @@ filters.message = {
 		if (!Buffer.isBuffer(value) || !('data_coding' in this)) {
 			return value;
 		}
-		var encoding: any = this.data_coding & 0x0f;
+		// Resolve the encoding from the full Data Coding Scheme (DCS) byte, not
+		// just the low nibble. The naive `data_coding & 0x0F` is wrong when the
+		// DCS carries message-class / MWI / compression bits in the high nibble
+		// (GSM 03.38), which caused mis-decoded / empty messages (issues #66, #252).
+		var dc: number = this.data_coding;
+		var enc = 0;
+		if (dc <= 0x0e) {
+			enc = dc & 0x0f;
+		} else if ((dc & 0xf0) === 0xf0) {
+			// Data coding / message class (0xFx)
+			enc = dc & 0x04 ? consts.ENCODING.BINARY : consts.ENCODING.ASCII;
+		} else if ((dc & 0xc0) === 0x00) {
+			// General data coding, no MWI (0x00–0x3F): bits 3,2 select charset
+			var mode = (dc & 0x0c) >> 2;
+			enc =
+				mode === 1
+					? consts.ENCODING.BINARY
+					: mode === 2
+						? consts.ENCODING.UCS2
+						: consts.ENCODING.ASCII;
+		} else if ((dc & 0xc0) === 0xc0) {
+			// Message Waiting Indication groups (0xC0–0xFF)
+			enc = (dc & 0xe0) === 0xe0 ? consts.ENCODING.UCS2 : consts.ENCODING.ASCII;
+		}
+		var encoding: any = enc;
 		if (!encoding) {
 			encoding = encodings.default;
 		} else {

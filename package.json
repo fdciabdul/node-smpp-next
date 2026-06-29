@@ -65,7 +65,9 @@
     "typescript": "^5.7.2"
   },
   "dependencies": {
-    "findhit-proxywrap": "^0.3.12",
     "iconv-lite": "0.x"
+  },
+  "optionalDependencies": {
+    "findhit-proxywrap": "^0.3.12"
   }
 }

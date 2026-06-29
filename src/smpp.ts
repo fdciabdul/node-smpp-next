@@ -3,19 +3,41 @@ import tls from 'tls';
 import util from 'util';
 import { parse } from 'url';
 import { EventEmitter } from 'events';
-// @ts-ignore - findhit-proxywrap ships no types
-import { proxy } from 'findhit-proxywrap';
 import * as defs from './defs';
 import { PDU } from './pdu';
 
-const proxyTransport = proxy(net, {
-	strict: false,
-	ignoreStrictExceptions: true,
-});
-const proxyTlsTransport = proxy(tls, {
-	strict: false,
-	ignoreStrictExceptions: true,
-});
+// `findhit-proxywrap` pulls in a GPLv3 transitive dependency (findhit-util).
+// To keep the core package free of that license obligation (issue #214) it is
+// declared as an optional dependency and loaded lazily — only when the proxy
+// protocol feature is actually used. Core client/server usage never touches it.
+let _proxyTransport: any = null;
+let _proxyTlsTransport: any = null;
+
+function loadProxy(): any {
+	try {
+		// eslint-disable-next-line @typescript-eslint/no-var-requires
+		return require('findhit-proxywrap').proxy;
+	} catch (e) {
+		throw new Error(
+			'Proxy protocol support requires the optional dependency ' +
+				'"findhit-proxywrap". Install it with `npm install findhit-proxywrap`.'
+		);
+	}
+}
+
+function getProxyTransport(): any {
+	if (!_proxyTransport) {
+		_proxyTransport = loadProxy()(net, { strict: false, ignoreStrictExceptions: true });
+	}
+	return _proxyTransport;
+}
+
+function getProxyTlsTransport(): any {
+	if (!_proxyTlsTransport) {
+		_proxyTlsTransport = loadProxy()(tls, { strict: false, ignoreStrictExceptions: true });
+	}
+	return _proxyTlsTransport;
+}
 
 export interface SessionOptions {
 	socket?: any;
@@ -424,7 +446,7 @@ export function Server(this: any, options?: any, listener?: any) {
 
 	// Fetch the right transport based on the current options
 	if (this.isProxiedServer) {
-		transport = this.tls ? proxyTlsTransport : proxyTransport;
+		transport = this.tls ? getProxyTlsTransport() : getProxyTransport();
 	} else {
 		transport = this.tls ? tls : net;
 	}
@@ -484,23 +506,37 @@ export function SecureServer(this: any, options?: any, listener?: any) {
 	Server.call(this, options, listener);
 }
 
-function ProxyServer(this: any, options: any, listener?: any) {
-	options.isProxiedServer = true;
-	Server.call(this, options, listener);
-}
-
-function ProxySecureServer(this: any, options: any, listener?: any) {
-	options.isProxiedServer = true;
-	Server.call(this, options, listener);
-}
-
 // Standard servers without proxy protocol support
 util.inherits(Server, net.Server);
 util.inherits(SecureServer, tls.Server);
 
-// Servers with proxy protocol support
-util.inherits(ProxyServer, proxyTransport.Server);
-util.inherits(ProxySecureServer, proxyTlsTransport.Server);
+// Proxy-protocol server constructors are built lazily so the optional
+// `findhit-proxywrap` dependency (and its GPLv3 transitive dep) is only
+// required when proxy protocol detection is actually enabled (issue #214).
+let _ProxyServer: any = null;
+let _ProxySecureServer: any = null;
+
+function getProxyServer(): any {
+	if (!_ProxyServer) {
+		_ProxyServer = function (this: any, options: any, listener?: any) {
+			options.isProxiedServer = true;
+			Server.call(this, options, listener);
+		};
+		util.inherits(_ProxyServer, getProxyTransport().Server);
+	}
+	return _ProxyServer;
+}
+
+function getProxySecureServer(): any {
+	if (!_ProxySecureServer) {
+		_ProxySecureServer = function (this: any, options: any, listener?: any) {
+			options.isProxiedServer = true;
+			Server.call(this, options, listener);
+		};
+		util.inherits(_ProxySecureServer, getProxyTlsTransport().Server);
+	}
+	return _ProxySecureServer;
+}
 
 export function createServer(options?: any, listener?: any) {
 	if (typeof options == 'function') {
@@ -512,13 +548,13 @@ export function createServer(options?: any, listener?: any) {
 
 	if (options.key && options.cert) {
 		if (options.enable_proxy_protocol_detection) {
-			return new (ProxySecureServer as any)(options, listener);
+			return new (getProxySecureServer())(options, listener);
 		} else {
 			return new (SecureServer as any)(options, listener);
 		}
 	} else {
 		if (options.enable_proxy_protocol_detection) {
-			return new (ProxyServer as any)(options, listener);
+			return new (getProxyServer())(options, listener);
 		} else {
 			return new (Server as any)(options, listener);
 		}
