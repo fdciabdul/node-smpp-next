@@ -50,6 +50,12 @@ export interface SessionOptions {
 	connectTimeout?: number;
 	auto_enquire_link_period?: number;
 	rejectUnauthorized?: boolean;
+	/** Per-request timeout (ms) for a command awaiting its `_resp`. 0 = disabled. (issue #227) */
+	responseTimeout?: number;
+	/** Client-only: automatically reconnect the socket after an unexpected close. (issue #248) */
+	autoReconnect?: boolean;
+	/** Delay (ms) between reconnect attempts when `autoReconnect` is enabled. Default 5000. */
+	reconnectInterval?: number;
 	[key: string]: any;
 }
 
@@ -62,8 +68,6 @@ export function Session(this: any, options?: SessionOptions) {
 	EventEmitter.call(this);
 	this.options = options || {};
 	var self = this;
-	var clientTransport: any = net;
-	var connectTimeout: any;
 	this._extractPDUs = this._extractPDUs.bind(self);
 	this.sequence = 0;
 	this.paused = false;
@@ -73,75 +77,85 @@ export function Session(this: any, options?: SessionOptions) {
 	this.proxyProtocolProxy = null;
 	this._busy = false;
 	this._callbacks = {};
+	this._timeouts = {};
 	this._interval = 0;
 	this._command_length = null;
 	this._mode = null;
 	this._id = Math.floor(Math.random() * (999999 - 100000)) + 100000; // random session id
 	this._prevBytesRead = 0;
+	this._connectTimeout = null;
+	this._userClosed = false;
+	this._reconnectTimer = null;
 	this.rootSocket = function () {
 		if (self.socket._parent) return self.socket._parent;
 		return self.socket;
 	};
-	if (options && options.socket) {
+	if (this.options.socket) {
 		// server mode / socket is already connected.
 		this._mode = 'server';
-		this.socket = options.socket;
+		this.socket = this.options.socket;
 		this.remoteAddress = self.rootSocket().remoteAddress || self.remoteAddress;
 		this.remotePort = this.rootSocket().remotePort;
 		this.proxyProtocolProxy = this.rootSocket().proxyAddress
 			? { address: this.rootSocket().proxyAddress, port: this.rootSocket().proxyPort }
 			: false;
+		this._attachSocketHandlers();
 	} else {
 		// client mode
 		this._mode = 'client';
-		options = options || {};
-		if (options.tls) {
-			clientTransport = tls;
-		}
-		if (
-			options.hasOwnProperty('connectTimeout') &&
-			(options.connectTimeout as number) > 0
-		) {
-			connectTimeout = setTimeout(function () {
-				if (self.socket) {
-					var e: any = new Error(
-						'Timeout of ' +
-							options!.connectTimeout +
-							'ms while connecting to ' +
-							self.options.host +
-							':' +
-							self.options.port
-					);
-					e.code = 'ETIMEOUT';
-					e.timeout = options!.connectTimeout;
-					self.socket.destroy(e);
-				}
-			}, options.connectTimeout);
-		}
-		this.socket = clientTransport.connect(this.options);
-		this.socket.on(
-			'connect',
-			function () {
-				clearTimeout(connectTimeout);
-				self.remoteAddress = self.rootSocket().remoteAddress || self.remoteAddress;
-				self.remotePort = self.rootSocket().remotePort || self.remoteAddress;
-				self.debug('server.connected', 'connected to server', { secure: options!.tls });
-				self.emitMetric('server.connected', 1);
-				self.emit('connect'); // @todo should emit the session, but it would break BC
-				if (self.options.auto_enquire_link_period) {
-					self._interval = setInterval(function () {
-						self.enquire_link();
-					}, self.options.auto_enquire_link_period);
-				}
-			}.bind(this)
-		);
-		this.socket.on(
-			'secureConnect',
-			function () {
-				self.emit('secureConnect'); // @todo should emit the session, but it would break BC
-			}.bind(this)
-		);
+		this._openClientSocket();
 	}
+}
+
+util.inherits(Session, EventEmitter);
+
+// Open (or re-open) the client socket and wire connect handlers. Reused by the
+// constructor and by auto-reconnect (issue #248).
+Session.prototype._openClientSocket = function () {
+	var self = this;
+	var clientTransport: any = this.options.tls ? tls : net;
+	if (this.options.connectTimeout > 0) {
+		this._connectTimeout = setTimeout(function () {
+			if (self.socket) {
+				var e: any = new Error(
+					'Timeout of ' +
+						self.options.connectTimeout +
+						'ms while connecting to ' +
+						self.options.host +
+						':' +
+						self.options.port
+				);
+				e.code = 'ETIMEOUT';
+				e.timeout = self.options.connectTimeout;
+				self.socket.destroy(e);
+			}
+		}, this.options.connectTimeout);
+	}
+	this.closed = false;
+	this.socket = clientTransport.connect(this.options);
+	this.socket.on('connect', function () {
+		clearTimeout(self._connectTimeout);
+		self.remoteAddress = self.rootSocket().remoteAddress || self.remoteAddress;
+		self.remotePort = self.rootSocket().remotePort || self.remoteAddress;
+		self.debug('server.connected', 'connected to server', { secure: self.options.tls });
+		self.emitMetric('server.connected', 1);
+		self.emit('connect'); // @todo should emit the session, but it would break BC
+		if (self.options.auto_enquire_link_period) {
+			self._interval = setInterval(function () {
+				self.enquire_link();
+			}, self.options.auto_enquire_link_period);
+		}
+	});
+	this.socket.on('secureConnect', function () {
+		self.emit('secureConnect'); // @todo should emit the session, but it would break BC
+	});
+	this._attachSocketHandlers();
+};
+
+// Attach the readable/close/error handlers shared by both client and server
+// sockets.
+Session.prototype._attachSocketHandlers = function () {
+	var self = this;
 	this.socket.on('readable', function () {
 		var bytesRead = self.socket.bytesRead - self._prevBytesRead;
 		if (bytesRead > 0) {
@@ -154,7 +168,12 @@ export function Session(this: any, options?: SessionOptions) {
 	});
 	this.socket.on('close', function () {
 		self.closed = true;
-		clearTimeout(connectTimeout);
+		clearTimeout(self._connectTimeout);
+		// drop any pending per-request response timers (issue #227)
+		for (var seq in self._timeouts) {
+			clearTimeout(self._timeouts[seq]);
+		}
+		self._timeouts = {};
 		if (self._mode === 'server') {
 			self.debug('client.disconnected', 'client has disconnected');
 			self.emitMetric('client.disconnected', 1);
@@ -167,9 +186,17 @@ export function Session(this: any, options?: SessionOptions) {
 			clearInterval(self._interval);
 			self._interval = 0;
 		}
+		// auto-reconnect on unexpected close (client only, issue #248)
+		if (self._mode === 'client' && self.options.autoReconnect && !self._userClosed) {
+			var delay = self.options.reconnectInterval || 5000;
+			self.debug('server.reconnecting', 'reconnecting in ' + delay + 'ms');
+			self._reconnectTimer = setTimeout(function () {
+				self._reconnect();
+			}, delay);
+		}
 	});
 	this.socket.on('error', function (e: any) {
-		clearTimeout(connectTimeout);
+		clearTimeout(self._connectTimeout);
 		if (self._interval) {
 			clearInterval(self._interval);
 			self._interval = 0;
@@ -178,9 +205,24 @@ export function Session(this: any, options?: SessionOptions) {
 		self.emitMetric('socket.error', 1, { error: e });
 		self.emit('error', e); // Emitted errors will kill the program if they're not captured.
 	});
-}
+};
 
-util.inherits(Session, EventEmitter);
+// Re-establish a fresh client socket after an unexpected disconnect (issue #248).
+// Emits 'reconnecting'; the existing 'connect' listener should re-bind.
+Session.prototype._reconnect = function () {
+	if (this._userClosed) {
+		return;
+	}
+	this.sequence = 0;
+	this.paused = false;
+	this._busy = false;
+	this._callbacks = {};
+	this._timeouts = {};
+	this._command_length = null;
+	this._prevBytesRead = 0;
+	this.emit('reconnecting');
+	this._openClientSocket();
+};
 
 Session.prototype.emitMetric = function (event: any, value: any, payload: any) {
 	this.emit('metrics', event || null, value || null, payload || {}, {
@@ -243,6 +285,8 @@ Session.prototype.connect = function () {
 	this.paused = false;
 	this._busy = false;
 	this._callbacks = {};
+	this._timeouts = {};
+	this._userClosed = false;
 	this.socket.connect(this.options);
 };
 
@@ -275,6 +319,10 @@ Session.prototype._extractPDUs = function () {
 		this.emit('pdu', pdu);
 		this.emit(pdu.command, pdu);
 		if (pdu.isResponse() && this._callbacks[pdu.sequence_number]) {
+			if (this._timeouts[pdu.sequence_number]) {
+				clearTimeout(this._timeouts[pdu.sequence_number]);
+				delete this._timeouts[pdu.sequence_number];
+			}
 			this._callbacks[pdu.sequence_number](pdu);
 			delete this._callbacks[pdu.sequence_number];
 		}
@@ -313,6 +361,21 @@ Session.prototype.send = function (
 		}
 		if (responseCallback) {
 			this._callbacks[pdu.sequence_number] = responseCallback;
+			// optional per-request response timeout (issue #227)
+			var responseTimeout = this.options.responseTimeout || 0;
+			if (responseTimeout > 0) {
+				var self = this;
+				var seq = pdu.sequence_number;
+				this._timeouts[seq] = setTimeout(function () {
+					if (self._callbacks[seq]) {
+						delete self._callbacks[seq];
+						delete self._timeouts[seq];
+						self.debug('pdu.command.timeout', pdu.command, pdu);
+						self.emitMetric('pdu.command.timeout', 1, pdu);
+						self.emit('responseTimeout', pdu);
+					}
+				}, responseTimeout);
+			}
 		}
 	} else if (responseCallback && !sendCallback) {
 		sendCallback = responseCallback;
@@ -335,6 +398,10 @@ Session.prototype.send = function (
 				});
 				if (!pdu.isResponse() && this._callbacks[pdu.sequence_number]) {
 					delete this._callbacks[pdu.sequence_number];
+					if (this._timeouts[pdu.sequence_number]) {
+						clearTimeout(this._timeouts[pdu.sequence_number]);
+						delete this._timeouts[pdu.sequence_number];
+					}
 				}
 				if (failureCallback) {
 					pdu.command_status = defs.errors.ESME_RSUBMITFAIL;
@@ -363,6 +430,12 @@ Session.prototype.resume = function () {
 };
 
 Session.prototype.close = function (callback?: () => void) {
+	// user-initiated close stops auto-reconnect (issue #248)
+	this._userClosed = true;
+	if (this._reconnectTimer) {
+		clearTimeout(this._reconnectTimer);
+		this._reconnectTimer = null;
+	}
 	if (callback) {
 		if (this.closed) {
 			callback();
@@ -374,6 +447,12 @@ Session.prototype.close = function (callback?: () => void) {
 };
 
 Session.prototype.destroy = function (callback?: () => void) {
+	// user-initiated destroy stops auto-reconnect (issue #248)
+	this._userClosed = true;
+	if (this._reconnectTimer) {
+		clearTimeout(this._reconnectTimer);
+		this._reconnectTimer = null;
+	}
 	if (callback) {
 		if (this.closed) {
 			callback();
@@ -615,6 +694,147 @@ export function addTLV(tag: string, options: any) {
 	options.tag = tag;
 	defs.tlvs[tag] = options;
 	defs.tlvsById[options.id] = options;
+}
+
+// ---------------------------------------------------------------------------
+// Session pool (issue #249)
+// ---------------------------------------------------------------------------
+
+export interface PoolOptions extends SessionOptions {
+	/** Number of client sessions to maintain. Default 1. */
+	size?: number;
+	/** Bind command to use for each session. Default 'bind_transceiver'. */
+	bindType?: 'bind_transceiver' | 'bind_transmitter' | 'bind_receiver';
+	/** Parameters passed to the bind command (system_id, password, ...). */
+	bindOptions?: any;
+}
+
+interface PoolMember {
+	session: any;
+	bound: boolean;
+}
+
+/**
+ * A small pool of client sessions that each auto-bind and auto-reconnect, with
+ * round-robin dispatch of outgoing commands across the bound sessions. Incoming
+ * `deliver_sm` PDUs are re-emitted and auto-acknowledged.
+ */
+export class Pool extends EventEmitter {
+	options: PoolOptions;
+	size: number;
+	members: PoolMember[] = [];
+	private _rr = 0;
+
+	constructor(options: PoolOptions) {
+		super();
+		this.options = options || {};
+		this.size = this.options.size || 1;
+		for (var i = 0; i < this.size; i++) {
+			this._createMember();
+		}
+	}
+
+	private _createMember(): void {
+		var self = this;
+		var opts: any = Object.assign({}, this.options, {
+			autoReconnect: this.options.autoReconnect !== false,
+		});
+		var bindType = this.options.bindType || 'bind_transceiver';
+		var bindOptions = this.options.bindOptions || {};
+		var session = connect(opts);
+		var member: PoolMember = { session: session, bound: false };
+
+		var bind = function () {
+			session[bindType](bindOptions, function (pdu: any) {
+				member.bound = pdu.command_status === 0;
+				if (member.bound) {
+					self.emit('bound', session);
+				} else {
+					self.emit('bindError', pdu, session);
+				}
+			});
+		};
+
+		session.on(opts.tls ? 'secureConnect' : 'connect', bind);
+		session.on('reconnecting', function () {
+			member.bound = false;
+		});
+		session.on('close', function () {
+			member.bound = false;
+		});
+		session.on('error', function (e: any) {
+			self.emit('error', e, session);
+		});
+		session.on('deliver_sm', function (pdu: any) {
+			self.emit('deliver_sm', pdu, session);
+			session.send(pdu.response());
+		});
+
+		this.members.push(member);
+		this.emit('session', session);
+	}
+
+	/** Pick the next bound session (round-robin), or null if none are ready. */
+	private _next(): any {
+		var bound = this.members.filter(function (m) {
+			return m.bound;
+		});
+		if (!bound.length) {
+			return null;
+		}
+		var member = bound[this._rr++ % bound.length];
+		return member.session;
+	}
+
+	/** Dispatch an arbitrary command to the next bound session. */
+	send(command: string, options: any, callback?: (pdu: any) => void): boolean {
+		var session = this._next();
+		if (!session) {
+			var err: any = new Error('No bound session available in pool');
+			err.code = 'ENOBOUNDSESSION';
+			if (callback) {
+				callback(err);
+			} else {
+				this.emit('error', err);
+			}
+			return false;
+		}
+		return session[command](options, callback);
+	}
+
+	submit_sm(options: any, callback?: (pdu: any) => void): boolean {
+		return this.send('submit_sm', options, callback);
+	}
+
+	data_sm(options: any, callback?: (pdu: any) => void): boolean {
+		return this.send('data_sm', options, callback);
+	}
+
+	/** Whether at least one session is currently bound. */
+	get ready(): boolean {
+		return this.members.some(function (m) {
+			return m.bound;
+		});
+	}
+
+	close(callback?: () => void): void {
+		var remaining = this.members.length;
+		if (!remaining) {
+			if (callback) callback();
+			return;
+		}
+		this.members.forEach(function (m) {
+			m.session.close(function () {
+				if (--remaining === 0 && callback) {
+					callback();
+				}
+			});
+		});
+	}
+}
+
+export function createPool(options: PoolOptions): Pool {
+	return new Pool(options);
 }
 
 export { PDU };

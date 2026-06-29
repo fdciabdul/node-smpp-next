@@ -19,6 +19,44 @@ SMPP client and server implementation in node.js.
   unnecessary `safer-buffer` shim; production deps audit clean.
 - **Node baseline** raised to `>=18`.
 
+### New features / upstream fixes
+
+- **Auto-reconnect** (`autoReconnect`, `reconnectInterval`) — client re-opens the
+  socket after an unexpected close and re-emits `connect` so you can re-bind
+  (upstream #248).
+- **Response timeout** (`responseTimeout`) — emits `responseTimeout` when a
+  command's `_resp` doesn't arrive in time (upstream #227).
+- **User-defined TLVs** — custom/unknown TLVs addressed by numeric tag id now
+  round-trip on encode, not just decode (upstream #231).
+- **Session pool** — `smpp.createPool({ size, bindOptions, ... })` keeps N bound,
+  auto-reconnecting sessions and round-robins outgoing commands (upstream #249).
+- **Robust encoding** — tolerant of non-string `short_message` (number/null) and
+  DCS-aware decoding of the full Data Coding Scheme byte (upstream #229/#256/#66/#252).
+
+```javascript
+// Auto-reconnect + response timeout
+const session = smpp.connect({
+  url: 'smpp://example.com:2775',
+  autoReconnect: true,
+  reconnectInterval: 5000,
+  responseTimeout: 30000,
+});
+session.on('connect', () => session.bind_transceiver({ system_id, password }));
+session.on('responseTimeout', (pdu) => console.warn('no resp for', pdu.command));
+
+// Session pool
+const pool = smpp.createPool({
+  url: 'smpp://example.com:2775',
+  size: 4,
+  bindOptions: { system_id, password },
+});
+pool.on('bound', () => pool.submit_sm({ destination_addr, short_message }, console.log));
+pool.on('deliver_sm', (pdu) => console.log('DLR', pdu.short_message));
+
+// User-defined TLV (numeric tag id)
+session.submit_sm({ destination_addr, short_message: 'hi', 0x3c02: Buffer.from('TEST') });
+```
+
 ### Install
 
 ```sh

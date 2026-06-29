@@ -13,6 +13,22 @@ const pduHeadParams = [
 	'sequence_number',
 ];
 
+// A user-defined / unknown TLV is addressed by its numeric tag id (e.g. 0x3C02)
+// which becomes a numeric-string key on the PDU. Treat such keys as raw TLVs so
+// they round-trip on encode, not only on decode (issue #231).
+function isRawTlvKey(key: string, params: Record<string, any>): boolean {
+	if (!/^[0-9]+$/.test(key)) return false;
+	var id = Number(key);
+	if (id < 0 || id > 0xffff) return false;
+	return !(key in params) && !tlvs[key];
+}
+
+function toRawTlvBuffer(value: any): Buffer {
+	if (Buffer.isBuffer(value)) return value;
+	if (value === null || value === undefined) return Buffer.alloc(0);
+	return Buffer.from(String(value), 'ascii');
+}
+
 export interface PDUOptions {
 	command_status?: number;
 	sequence_number?: number;
@@ -55,6 +71,11 @@ export class PDU {
 		for (var key in options)
 			if (key in tlvs && !(key in params)) {
 				this[key] = options[key];
+			}
+		// user-defined / unknown TLVs addressed by numeric tag id (issue #231)
+		for (var rkey in options)
+			if (isRawTlvKey(rkey, params)) {
+				this[rkey] = options[rkey];
 			}
 	}
 
@@ -226,6 +247,10 @@ export class PDU {
 				values.forEach((value: any) => {
 					this.command_length += tlvs[key].type.size(value) + 4;
 				});
+			} else if (isRawTlvKey(key, params)) {
+				// User-defined / unknown TLV addressed by its numeric tag id
+				// (issue #231). Value is a Buffer or string, written verbatim.
+				this.command_length += toRawTlvBuffer(self[key]).length + 4;
 			}
 		}
 		var buffer = this._initBuffer();
@@ -247,6 +272,15 @@ export class PDU {
 					tlvs[key].type.write(value, buffer, offset);
 					offset += length;
 				});
+			}
+		for (var rkey in self)
+			if (isRawTlvKey(rkey, params)) {
+				var raw = toRawTlvBuffer(self[rkey]);
+				buffer.writeUInt16BE(Number(rkey), offset);
+				buffer.writeUInt16BE(raw.length, offset + 2);
+				offset += 4;
+				raw.copy(buffer, offset);
+				offset += raw.length;
 			}
 		return buffer;
 	}
